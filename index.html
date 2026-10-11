@@ -58,10 +58,20 @@
   function say(el, html, cls) { el.innerHTML = html; el.className = cls || (el === status ? 'hint' : ''); }
   function secs() { return (performance.now() / 1000).toFixed(1); }
 
+  // JSONP (a script tag) instead of fetch: Telegram on iPhone (WebKit) rejects the cross-origin
+  // redirect Google puts in front of Apps Script responses ("Load failed"); script tags are not affected.
+  var seq = 0;
   function call(payload) {
     payload.initData = tg ? tg.initData : '';
-    return fetch(api + (api.indexOf('?') < 0 ? '?' : '&') + 'api=form', { method: 'POST', body: JSON.stringify(payload) })
-      .then(function (r) { return r.json(); });
+    return new Promise(function (resolve, reject) {
+      var name = '__ft' + Date.now() + '_' + (seq++), s = document.createElement('script');
+      var done = function () { delete window[name]; s.remove(); clearTimeout(timer); };
+      var timer = setTimeout(function () { done(); reject('timeout'); }, 25000);
+      window[name] = function (r) { done(); resolve(r); };
+      s.onerror = function () { done(); reject('load error'); };
+      s.src = api + (api.indexOf('?') < 0 ? '?' : '&') + 'api=form&cb=' + name + '&p=' + encodeURIComponent(JSON.stringify(payload));
+      document.head.appendChild(s);
+    });
   }
 
   function render(cats) {

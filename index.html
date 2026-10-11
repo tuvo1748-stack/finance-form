@@ -4,9 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Finance Tracker</title>
-<!-- Finance Tracker Mini App (Telegram), hosted on GitHub Pages: UI only, no data in this file.
-     Data comes from the owner's Apps Script web app (URL passed by the bot in ?api=), and every call
-     carries Telegram's signed initData, verified server-side as the owner. Test version 2026-10-12. -->
+<!-- Finance Tracker — transaction form (Telegram Mini App), hosted on GitHub Pages.
+     UI only: no data lives in this file. The bot opens it with ?tx=<Transaction ID>&api=<Apps Script
+     /exec URL>; every call carries Telegram's signed initData and is verified server-side as the owner.
+     Calls use JSONP (script tags): Telegram on iPhone rejects the cross-origin redirect in front of
+     Apps Script responses. Requests must stay under ~8 000 characters (notes and parts are capped).
+     Owner-approved design 2026-10-12: English first, Vietnamese second; one-colour outline icons. -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root {
@@ -15,33 +18,76 @@
     --hint: var(--tg-theme-hint-color, #9a95a6);
     --field: var(--tg-theme-secondary-bg-color, #2c2c2e);
     --accent: var(--tg-theme-button-color, #3e88f7);
+    --line: rgba(127, 127, 127, .28);
+    --bad: #ff6b6b;
   }
-  body { margin: 0; padding: 14px 14px 90px; background: var(--bg); color: var(--text);
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 14px 14px 96px; background: var(--bg); color: var(--text);
          font: 15px -apple-system, system-ui, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
-  h1 { font-size: 18px; font-weight: 600; margin: 0 0 2px; }
-  .hint { color: var(--hint); font-size: 13px; margin: 2px 0 12px; }
+  [hidden] { display: none !important; }
+  .amount { font-size: 26px; font-weight: 600; letter-spacing: -.3px; }
+  .sub { color: var(--hint); font-size: 13px; line-height: 1.45; margin-top: 2px; word-break: break-word; }
+  .seg { display: flex; background: var(--field); border-radius: 10px; padding: 3px; margin: 14px 0 6px; }
+  .seg button { flex: 1; border: 0; background: transparent; color: var(--hint); font: inherit; font-size: 13px;
+                padding: 8px 4px; border-radius: 8px; }
+  .seg button.on { background: var(--bg); color: var(--text); font-weight: 600; }
+  .group { color: var(--hint); font-size: 12px; margin: 14px 0 6px; }
   .label { color: var(--hint); font-size: 13px; margin: 14px 0 6px; }
   .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .tile { background: var(--field); border: 2px solid transparent; border-radius: 12px; padding: 10px 4px 8px;
-          text-align: center; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
+          text-align: center; user-select: none; -webkit-tap-highlight-color: transparent; }
   .tile.on { border-color: var(--accent); }
   .ic { width: 24px; height: 24px; margin: 0 auto 5px; background: currentColor;
         -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
   .en { font-size: 12.5px; font-weight: 600; line-height: 1.2; }
   .vi { font-size: 11.5px; color: var(--hint); line-height: 1.2; margin-top: 1px; }
-  textarea { width: 100%; box-sizing: border-box; background: var(--field); color: var(--text); border: 0;
-             border-radius: 12px; padding: 10px 12px; font: inherit; min-height: 64px; resize: none; }
-  #msg { margin-top: 14px; font-size: 14px; line-height: 1.5; }
-  .ok { color: #4cd964; } .bad { color: #ff6b6b; }
+  input, select, textarea { width: 100%; background: var(--field); color: var(--text); border: 0; border-radius: 10px;
+                            padding: 10px 12px; font: inherit; font-size: 15px; -webkit-appearance: none; appearance: none; }
+  select { background-image: linear-gradient(45deg, transparent 50%, var(--hint) 50%), linear-gradient(135deg, var(--hint) 50%, transparent 50%);
+           background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 26px; }
+  textarea { min-height: 64px; resize: none; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .chip { background: var(--field); border: 0; color: var(--text); font: inherit; font-size: 13px; border-radius: 16px; padding: 6px 12px; }
+  .chip.on { background: var(--accent); color: #fff; }
+  .part { border: 1px solid var(--line); border-radius: 12px; padding: 10px; margin-bottom: 8px; }
+  .part.rest { border-style: dashed; }
+  .part-head { display: flex; justify-content: space-between; align-items: center; color: var(--hint); font-size: 12.5px; margin-bottom: 7px; }
+  .part-head button { border: 0; background: transparent; color: var(--hint); font-size: 18px; line-height: 1; padding: 0 2px; }
+  .row { display: flex; gap: 6px; margin-bottom: 6px; }
+  .row > :first-child { flex: 1; } .row > :last-child { flex: 1.45; }
+  .restval { display: flex; align-items: center; padding: 10px 12px; border-radius: 10px; background: var(--field); color: var(--hint); }
+  .link { border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 14px; padding: 6px 0; }
+  .err { color: var(--bad); font-size: 13px; margin-top: 4px; }
+  #msg { margin-top: 12px; font-size: 14px; line-height: 1.5; }
 </style>
 </head>
 <body>
-<h1>Test form · Thử form</h1>
-<div class="hint" id="status">Loading · Đang tải…</div>
-<div class="grid" id="grid"></div>
-<div class="label">Note · Ghi chú</div>
-<textarea id="note" placeholder="e.g. lunch with Nam · vd: ăn trưa với Nam"></textarea>
-<div id="msg"></div>
+<div id="status" class="sub">Loading · Đang tải…</div>
+<div id="app" hidden>
+  <div class="amount" id="amount"></div>
+  <div class="sub" id="meta"></div>
+  <div class="seg" id="seg">
+    <button data-mode="single">One category · Một danh mục</button>
+    <button data-mode="split">Split · Tách nhiều phần</button>
+  </div>
+  <section id="single">
+    <div id="tiles"></div>
+    <div id="cpBox" hidden>
+      <div class="label">Counterparty · Với ai</div>
+      <div class="chips" id="chips"></div>
+      <input id="person" maxlength="40" placeholder="Other name · Tên khác" autocomplete="off">
+    </div>
+    <div class="label">Note · Ghi chú</div>
+    <textarea id="note" maxlength="150" placeholder="e.g. lunch with Nam · vd: ăn trưa với Nam"></textarea>
+  </section>
+  <section id="split" hidden>
+    <div class="label">Parts · Các phần — the last part is the rest · phần cuối tự tính</div>
+    <div id="parts"></div>
+    <button class="link" id="addPart">+ Add part · Thêm phần</button>
+  </section>
+  <div id="msg"></div>
+</div>
+<datalist id="people"></datalist>
 <script>
 (function () {
   var tg = window.Telegram && window.Telegram.WebApp;
@@ -49,79 +95,225 @@
   var ICONS = { 'Salary': 'cash', 'Other Income': 'circle-plus', 'Housing': 'home', 'Food & Dining': 'tools-kitchen-2',
     'Transportation': 'motorbike', 'Work': 'briefcase', 'Essentials': 'basket', 'Shopping': 'shopping-bag',
     'Entertainment': 'device-gamepad-2', 'Family': 'users', 'Miscellaneous': 'help-circle', 'Lending': 'heart-handshake',
-    'Debt Collection': 'circle-arrow-down', 'Borrowing': 'hand-stop', 'Repayment': 'credit-card',
+    'Debt Collection': 'circle-arrow-down', 'Borrowing': 'moneybag', 'Repayment': 'credit-card',
     'Savings Deposit': 'building-bank', 'Savings Withdrawal': 'pig-money' };
-  var params = new URLSearchParams(location.search), api = params.get('api') || '';
-  var status = document.getElementById('status'), grid = document.getElementById('grid'), msg = document.getElementById('msg');
-  var selected = '';
+  var GROUPS = { 'Income': 'Income · Thu nhập', 'Expense': 'Expense · Chi tiêu', 'Finance': 'Finance · Tài chính' };
+  var MAX_PARTS = 5, MAX_URL = 7800;
+  var params = new URLSearchParams(location.search), api = params.get('api') || '', txId = params.get('tx') || '';
+  var $ = function (id) { return document.getElementById(id); };
+  var S = { tx: null, cats: [], byName: {}, people: [], mode: 'single', cat: '', parts: [] };
 
-  function say(el, html, cls) { el.innerHTML = html; el.className = cls || (el === status ? 'hint' : ''); }
-  function secs() { return (performance.now() / 1000).toFixed(1); }
+  // ---------- helpers ----------
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function vnd(n) { return Math.round(n).toLocaleString('vi-VN') + 'đ'; }
+  // "30k" 30.000 · "30.000" / "30000" · "1tr2" 1.200.000 · "1,5tr" · "100 nghìn" (same rules as the server)
+  function parseAmount(s) {
+    var t = String(s || '').normalize('NFC').toLowerCase().replace(/\s+/g, '').replace(/(vnđ|vnd|đ)$/, '');
+    if (!t) return null;
+    var m = t.match(/^(\d+)(?:[.,](\d+))?(k|nghìn|nghin|ngàn|ngan|tr|triệu|trieu|m)(\d*)$/);
+    if (m) {
+      var unit = /^(k|ng)/.test(m[3]) ? 1e3 : 1e6, tail = m[4] ? Number(m[4]) * unit / Math.pow(10, m[4].length) : 0;
+      return Math.round((Number(m[1]) + (m[2] ? Number('0.' + m[2]) : 0)) * unit + tail);
+    }
+    if (/^\d{1,3}([.,]\d{3})+$/.test(t) || /^\d+$/.test(t)) return Number(t.replace(/[.,]/g, ''));
+    return NaN;
+  }
+  function say(html, bad) { $('msg').textContent = html; $('msg').style.color = bad ? 'var(--bad)' : ''; }
 
-  // JSONP (a script tag) instead of fetch: Telegram on iPhone (WebKit) rejects the cross-origin
-  // redirect Google puts in front of Apps Script responses ("Load failed"); script tags are not affected.
   var seq = 0;
   function call(payload) {
     payload.initData = tg ? tg.initData : '';
+    var src = api + (api.indexOf('?') < 0 ? '?' : '&') + 'api=form&cb=';
+    var name = '__ft' + Date.now() + '_' + (seq++);
+    src += name + '&p=' + encodeURIComponent(JSON.stringify(payload));
+    if (src.length > MAX_URL) return Promise.reject('Notes are too long, please shorten them · Ghi chú quá dài, hãy rút gọn');
     return new Promise(function (resolve, reject) {
-      var name = '__ft' + Date.now() + '_' + (seq++), s = document.createElement('script');
+      var s = document.createElement('script');
       var done = function () { delete window[name]; s.remove(); clearTimeout(timer); };
-      var timer = setTimeout(function () { done(); reject('timeout'); }, 25000);
+      var timer = setTimeout(function () { done(); reject('No answer, try again · Không có phản hồi, thử lại'); }, 30000);
       window[name] = function (r) { done(); resolve(r); };
-      s.onerror = function () { done(); reject('load error'); };
-      s.src = api + (api.indexOf('?') < 0 ? '?' : '&') + 'api=form&cb=' + name + '&p=' + encodeURIComponent(JSON.stringify(payload));
+      s.onerror = function () { done(); reject('Network error · Lỗi mạng'); };
+      s.src = src;
       document.head.appendChild(s);
     });
   }
 
-  function render(cats) {
-    cats.filter(function (c) { return c.direction === 'Out'; }).forEach(function (c) {
-      var d = document.createElement('div');
-      d.className = 'tile';
-      d.innerHTML = '<div class="ic" style="--icon:url(' + ICON + (ICONS[c.name] || 'circle') + '.svg)"></div>' +
-                    '<div class="en"></div><div class="vi"></div>';
-      d.querySelector('.en').textContent = c.name;
-      d.querySelector('.vi').textContent = c.vi || '';
-      d.onclick = function () {
-        selected = c.name;
-        [].forEach.call(grid.children, function (x) { x.classList.remove('on'); });
-        d.classList.add('on');
-        if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
-        say(msg, '');
-      };
-      grid.appendChild(d);
+  // ---------- one category ----------
+  function renderTiles() {
+    var box = $('tiles'); box.innerHTML = '';
+    var order = [];
+    S.cats.forEach(function (c) { if (order.indexOf(c.group) < 0) order.push(c.group); });
+    order.forEach(function (g) {
+      box.appendChild(el('div', 'group', GROUPS[g] || g));
+      var grid = el('div', 'grid');
+      S.cats.filter(function (c) { return c.group === g; }).forEach(function (c) {
+        var t = el('div', 'tile' + (S.cat === c.name ? ' on' : ''));
+        var ic = el('div', 'ic'); ic.style.setProperty('--icon', 'url(' + ICON + (ICONS[c.name] || 'circle') + '.svg)');
+        t.appendChild(ic); t.appendChild(el('div', 'en', c.name)); t.appendChild(el('div', 'vi', c.vi || ''));
+        t.onclick = function () {
+          S.cat = c.name;
+          if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+          renderTiles(); renderPerson(); say('');
+        };
+        grid.appendChild(t);
+      });
+      box.appendChild(grid);
+    });
+  }
+  function renderPerson() {
+    var c = S.byName[S.cat], show = !!(c && c.debt);
+    $('cpBox').hidden = !show;
+    if (!show) return;
+    var chips = $('chips'); chips.innerHTML = '';
+    S.people.forEach(function (p) {
+      var b = el('button', 'chip' + ($('person').value.trim().toLowerCase() === p.toLowerCase() ? ' on' : ''), p);
+      b.onclick = function () { $('person').value = p; renderPerson(); };
+      chips.appendChild(b);
     });
   }
 
-  function save() {
-    if (!selected) { say(msg, 'Pick a category first · Chọn một danh mục trước.', 'bad'); return; }
-    var t = performance.now();
-    tg.MainButton.showProgress();
-    call({ action: 'test', category: selected, note: document.getElementById('note').value })
-      .then(function (r) {
-        tg.MainButton.hideProgress();
-        if (!r.ok) { say(msg, '⛔ Refused · Bị từ chối: ' + r.why, 'bad'); return; }
-        say(msg, '✓ Saved · Đã lưu — ' + r.name + ' (' + ((performance.now() - t) / 1000).toFixed(1) + ' s)', 'ok');
-        if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-        setTimeout(function () { tg.close(); }, 700);   // closes the Mini App (works because this page is top-level)
-      })
-      .catch(function (e) { tg.MainButton.hideProgress(); say(msg, '⛔ Network error · Lỗi mạng: ' + e, 'bad'); });
+  // ---------- split ----------
+  function restOf() {
+    var used = 0;
+    S.parts.slice(0, -1).forEach(function (p) { var a = parseAmount(p.amount); if (a > 0) used += a; });
+    return S.tx.amount - used;
+  }
+  function catSelect(p) {
+    var s = el('select');
+    s.appendChild(new Option('Category · Danh mục', ''));
+    var order = [];
+    S.cats.forEach(function (c) { if (order.indexOf(c.group) < 0) order.push(c.group); });
+    order.forEach(function (g) {
+      var og = document.createElement('optgroup'); og.label = GROUPS[g] || g;
+      S.cats.filter(function (c) { return c.group === g; }).forEach(function (c) { og.appendChild(new Option(c.name + ' · ' + (c.vi || ''), c.name)); });
+      s.appendChild(og);
+    });
+    s.value = p.cat || '';
+    s.onchange = function () { p.cat = s.value; renderParts(); say(''); };
+    return s;
+  }
+  function renderParts() {
+    var box = $('parts'); box.innerHTML = '';
+    var last = S.parts.length - 1, rest = restOf();
+    S.parts.forEach(function (p, i) {
+      var isRest = i === last, card = el('div', 'part' + (isRest ? ' rest' : ''));
+      var head = el('div', 'part-head', 'Part ' + (i + 1) + ' · Phần ' + (i + 1) + (isRest ? ' — the rest · phần còn lại' : ''));
+      if (S.parts.length > 2 && !isRest) {
+        var x = el('button', '', '×'); x.setAttribute('aria-label', 'Remove part · Xoá phần');
+        x.onclick = function () { S.parts.splice(i, 1); renderParts(); };
+        head.appendChild(x);
+      }
+      card.appendChild(head);
+      var row = el('div', 'row');
+      if (isRest) {
+        row.appendChild(el('div', 'restval', rest > 0 ? vnd(rest) : '—'));
+      } else {
+        var a = el('input'); a.inputMode = 'decimal'; a.placeholder = 'Amount · Số tiền (vd 50k)'; a.value = p.amount || '';
+        a.oninput = function () { p.amount = a.value; var r = restOf(); card.parentNode.lastChild.querySelector('.restval').textContent = r > 0 ? vnd(r) : '—'; say(''); };
+        a.onblur = function () { var v = parseAmount(a.value); if (v > 0) { a.value = v.toLocaleString('vi-VN'); p.amount = a.value; } };
+        row.appendChild(a);
+      }
+      row.appendChild(catSelect(p));
+      card.appendChild(row);
+      var c = S.byName[p.cat];
+      if (c && c.debt) {
+        var who = el('input'); who.maxLength = 40; who.placeholder = 'Counterparty · Với ai'; who.value = p.person || '';
+        who.setAttribute('list', 'people'); who.autocomplete = 'off';
+        who.oninput = function () { p.person = who.value; };
+        who.style.marginBottom = '6px';
+        card.appendChild(who);
+      }
+      var n = el('input'); n.maxLength = 80; n.placeholder = 'Note · Ghi chú'; n.value = p.note || '';
+      n.oninput = function () { p.note = n.value; };
+      card.appendChild(n);
+      if (isRest && rest <= 0) card.appendChild(el('div', 'err', 'The parts above already use the whole amount · Các phần trên đã dùng hết số tiền'));
+      box.appendChild(card);
+    });
+    $('addPart').hidden = S.parts.length >= MAX_PARTS;
+  }
+  $('addPart').onclick = function () {
+    S.parts.splice(S.parts.length - 1, 0, { amount: '', cat: '', person: '', note: '' });
+    renderParts();
+  };
+
+  // ---------- mode, load, save ----------
+  function setMode(m) {
+    S.mode = m;
+    [].forEach.call($('seg').children, function (b) { b.classList.toggle('on', b.getAttribute('data-mode') === m); });
+    $('single').hidden = m !== 'single';
+    $('split').hidden = m !== 'split';
+    if (m === 'split') renderParts();
+    say('');
+  }
+  [].forEach.call($('seg').children, function (b) { b.onclick = function () { setMode(b.getAttribute('data-mode')); }; });
+
+  function fill(r) {
+    S.tx = r.tx; S.cats = r.cats; S.people = r.people || [];
+    S.cats.forEach(function (c) { S.byName[c.name] = c; });
+    var dl = $('people'); S.people.forEach(function (p) { dl.appendChild(new Option(p)); });
+    $('amount').textContent = (S.tx.direction === 'In' ? '+' : '−') + vnd(S.tx.amount);
+    $('meta').textContent = (S.tx.direction === 'In' ? 'In · Tiền vào' : 'Out · Tiền ra') + ' · ' + S.tx.when +
+                            (S.tx.desc ? ' · ' + S.tx.desc : '') + '\nBalance · Số dư: ' + vnd(S.tx.balance);
+    $('meta').style.whiteSpace = 'pre-line';
+    S.cat = S.tx.category || '';
+    $('person').value = S.tx.counterparty || '';
+    $('note').value = S.tx.note || '';
+    $('person').oninput = renderPerson;
+    var parts = S.tx.parts || [];
+    if (parts.length) {   // an existing split: its parts, then the rest (the last part when nothing is left)
+      S.parts = parts.map(function (p) { return { amount: p.amount.toLocaleString('vi-VN'), cat: p.category, person: p.counterparty, note: p.note }; });
+      var used = parts.reduce(function (a, p) { return a + p.amount; }, 0);
+      if (used < S.tx.amount || S.parts.length < 2) S.parts.push({ amount: '', cat: '', person: '', note: '' });
+    } else {
+      S.parts = [{ amount: '', cat: '', person: '', note: '' }, { amount: '', cat: '', person: '', note: '' }];
+    }
+    renderTiles(); renderPerson();
+    setMode(parts.length ? 'split' : 'single');
   }
 
-  if (!tg || !tg.initData) { say(status, '⚠️ Open it from the bot button · Hãy mở bằng nút trong chat với bot.', 'hint bad'); return; }
-  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(api)) { say(status, '⚠️ Missing system link · Thiếu link hệ thống.', 'hint bad'); return; }
+  function payload() {
+    if (S.mode === 'single') {
+      if (!S.cat) return 'Pick a category · Chọn một danh mục';
+      return { action: 'save', tx: S.tx.id, mode: 'single', category: S.cat,
+               counterparty: S.byName[S.cat] && S.byName[S.cat].debt ? $('person').value.trim() : '', note: $('note').value.trim() };
+    }
+    var out = [], rest = restOf();
+    for (var i = 0; i < S.parts.length; i++) {
+      var p = S.parts[i], isRest = i === S.parts.length - 1, a = isRest ? rest : parseAmount(p.amount);
+      if (!(a > 0)) return isRest ? 'The parts above already use the whole amount · Các phần trên đã dùng hết số tiền'
+                                  : 'Part ' + (i + 1) + ': enter an amount · Phần ' + (i + 1) + ': nhập số tiền';
+      if (!p.cat) return 'Part ' + (i + 1) + ': pick a category · Phần ' + (i + 1) + ': chọn danh mục';
+      out.push({ amount: a, category: p.cat, counterparty: S.byName[p.cat] && S.byName[p.cat].debt ? (p.person || '').trim() : '', note: (p.note || '').trim() });
+    }
+    return { action: 'save', tx: S.tx.id, mode: 'split', parts: out };
+  }
+
+  function save() {
+    var body = payload();
+    if (typeof body === 'string') { say(body, true); if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error'); return; }
+    tg.MainButton.showProgress();
+    call(body).then(function (r) {
+      tg.MainButton.hideProgress();
+      if (!r.ok) { say(r.why || 'Not saved · Chưa lưu được', true); return; }
+      if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+      say('✓ Saved · Đã lưu');
+      setTimeout(function () { tg.close(); }, 300);
+    }).catch(function (e) { tg.MainButton.hideProgress(); say(String(e), true); });
+  }
+
+  if (!tg || !tg.initData) { $('status').textContent = 'Open it from the bot button · Hãy mở bằng nút trong chat với bot.'; $('status').style.color = 'var(--bad)'; return; }
+  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(api) || !txId) { $('status').textContent = 'Missing link data · Thiếu dữ liệu link.'; $('status').style.color = 'var(--bad)'; return; }
   tg.ready();
   tg.expand();
   tg.MainButton.setText('Save · Lưu');
   tg.MainButton.onClick(save);
-  call({ action: 'categories' })
-    .then(function (r) {
-      if (!r.ok) { say(status, '⛔ Refused · Bị từ chối: ' + r.why, 'hint bad'); return; }
-      say(status, '✓ Verified · Đã xác minh: ' + r.name + ' · opened in · mở trong ' + secs() + ' s');
-      render(r.cats);
-      tg.MainButton.show();
-    })
-    .catch(function (e) { say(status, '⛔ Network error · Lỗi mạng: ' + e, 'hint bad'); });
+  call({ action: 'load', tx: txId }).then(function (r) {
+    if (!r.ok) { $('status').textContent = '⛔ ' + r.why; $('status').style.color = 'var(--bad)'; return; }
+    $('status').hidden = true;
+    $('app').hidden = false;
+    fill(r);
+    tg.MainButton.show();
+  }).catch(function (e) { $('status').textContent = '⛔ ' + e; $('status').style.color = 'var(--bad)'; });
 })();
 </script>
 </body>

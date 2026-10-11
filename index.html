@@ -4,110 +4,157 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Finance Tracker</title>
-<!-- Finance Tracker — transaction form (Telegram Mini App), hosted on GitHub Pages.
-     UI only: no data lives in this file. The bot opens it with ?tx=<Transaction ID>&api=<Apps Script
-     /exec URL>; every call carries Telegram's signed initData and is verified server-side as the owner.
-     Calls use JSONP (script tags): Telegram on iPhone rejects the cross-origin redirect in front of
-     Apps Script responses. Requests must stay under ~8 000 characters (notes and parts are capped).
-     Owner-approved design 2026-10-12: English first, Vietnamese second; one-colour outline icons. -->
+<!-- Finance Tracker — transaction form (Telegram Mini App), hosted on GitHub Pages. Version 2026-10-12b.
+     UI only: no data lives in this file. The bot opens it with ?tx=<Transaction ID>&d=<out|in>&api=<Apps
+     Script /exec URL> (never the amount or the text: this URL reaches GitHub's servers). Every call
+     carries Telegram's signed initData, verified server-side as the owner.
+     Fast open: categories, recent names and every transaction already opened are kept on the phone
+     (localStorage), so the tiles show at once; the transaction's own details arrive ~2 s later.
+     Fast save: the data is sent with navigator.sendBeacon (keeps going after the page closes) and the
+     form closes at once; if the server cannot save it, the bot says so in the chat.
+     Reads use JSONP (script tags): Telegram on iPhone rejects the cross-origin redirect in front of
+     Apps Script responses. Requests stay under ~8 000 characters (notes and parts are capped).
+     Owner-approved design 2026-10-12: English first, Vietnamese second; one-colour outline icons
+     (Tabler Icons, MIT licence, embedded below — no icon downloads). -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root {
-    --bg: var(--tg-theme-bg-color, #1c1c1e);
+    --bg: var(--tg-theme-bg-color, #000000);
     --text: var(--tg-theme-text-color, #ffffff);
-    --hint: var(--tg-theme-hint-color, #9a95a6);
-    --field: var(--tg-theme-secondary-bg-color, #2c2c2e);
+    --hint: var(--tg-theme-hint-color, #8e8e93);
+    --box: var(--tg-theme-secondary-bg-color, #1c1c1e);
     --accent: var(--tg-theme-button-color, #3e88f7);
-    --line: rgba(127, 127, 127, .28);
+    --line: rgba(142, 142, 147, .35);
     --bad: #ff6b6b;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; padding: 14px 14px 96px; background: var(--bg); color: var(--text);
+  body { margin: 0; padding: 12px 12px 96px; background: var(--bg); color: var(--text);
          font: 15px -apple-system, system-ui, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
   [hidden] { display: none !important; }
-  .amount { font-size: 26px; font-weight: 600; letter-spacing: -.3px; }
-  .sub { color: var(--hint); font-size: 13px; line-height: 1.45; margin-top: 2px; word-break: break-word; }
-  .seg { display: flex; background: var(--field); border-radius: 10px; padding: 3px; margin: 14px 0 6px; }
-  .seg button { flex: 1; border: 0; background: transparent; color: var(--hint); font: inherit; font-size: 13px;
-                padding: 8px 4px; border-radius: 8px; }
-  .seg button.on { background: var(--bg); color: var(--text); font-weight: 600; }
-  .group { color: var(--hint); font-size: 12px; margin: 14px 0 6px; }
-  .label { color: var(--hint); font-size: 13px; margin: 14px 0 6px; }
-  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-  .tile { background: var(--field); border: 2px solid transparent; border-radius: 12px; padding: 10px 4px 8px;
-          text-align: center; user-select: none; -webkit-tap-highlight-color: transparent; }
-  .tile.on { border-color: var(--accent); }
-  .ic { width: 24px; height: 24px; margin: 0 auto 5px; background: currentColor;
+  .box { background: var(--box); border-radius: 12px; padding: 10px 12px; }
+  .ic { display: inline-block; width: 22px; height: 22px; flex: none; background: currentColor;
         -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
-  .en { font-size: 12.5px; font-weight: 600; line-height: 1.2; }
-  .vi { font-size: 11.5px; color: var(--hint); line-height: 1.2; margin-top: 1px; }
-  input, select, textarea { width: 100%; background: var(--field); color: var(--text); border: 0; border-radius: 10px;
-                            padding: 10px 12px; font: inherit; font-size: 15px; -webkit-appearance: none; appearance: none; }
-  select { background-image: linear-gradient(45deg, transparent 50%, var(--hint) 50%), linear-gradient(135deg, var(--hint) 50%, transparent 50%);
-           background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 26px; }
-  textarea { min-height: 64px; resize: none; }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-  .chip { background: var(--field); border: 0; color: var(--text); font: inherit; font-size: 13px; border-radius: 16px; padding: 6px 12px; }
+  .en { font-size: 13px; font-weight: 600; line-height: 1.25; }
+  .vi { font-size: 11.5px; color: var(--hint); line-height: 1.25; }
+  .lbl { font-size: 11.5px; color: var(--hint); line-height: 1.3; }
+  .lbl b { color: var(--text); font-weight: 600; }
+  .section { font-size: 12px; color: var(--hint); margin: 14px 2px 6px; }
+  /* header */
+  #head .amt { display: flex; align-items: center; gap: 6px; font-size: 24px; font-weight: 600; letter-spacing: -.3px; }
+  #head .meta { color: var(--hint); font-size: 12.5px; margin-top: 3px; line-height: 1.4; word-break: break-word; }
+  #head .desc { font-size: 14px; margin-top: 4px; line-height: 1.35; word-break: break-word; }
+  /* mode switch: two tiles like the category tiles */
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0 2px; }
+  .seg button { display: flex; align-items: center; gap: 9px; text-align: left; background: var(--box); color: var(--text);
+                border: 2px solid transparent; border-radius: 12px; padding: 9px 10px; font: inherit; }
+  .seg button.on { border-color: var(--accent); }
+  /* category tiles */
+  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .tile { background: var(--box); border: 2px solid transparent; border-radius: 12px; padding: 10px 4px 8px;
+          text-align: center; user-select: none; -webkit-tap-highlight-color: transparent; }
+  .tile .ic { display: block; margin: 0 auto 5px; }
+  .tile.on { border-color: var(--accent); }
+  .part .tile { padding: 8px 3px 7px; }
+  .part .tile .ic { width: 19px; height: 19px; }
+  .part .tile .en { font-size: 11.5px; } .part .tile .vi { font-size: 10.5px; }
+  /* fields */
+  input, textarea { width: 100%; background: transparent; color: var(--text); border: 0; padding: 0; margin-top: 3px;
+                    font: inherit; font-size: 15px; outline: none; -webkit-appearance: none; appearance: none; }
+  input::placeholder, textarea::placeholder { color: var(--hint); opacity: .8; }
+  textarea { min-height: 44px; resize: none; }
+  .big { font-size: 19px !important; font-weight: 600; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 4px; }
+  .chip { background: var(--bg); border: 0; color: var(--text); font: inherit; font-size: 13px; border-radius: 16px; padding: 6px 12px; }
   .chip.on { background: var(--accent); color: #fff; }
-  .part { border: 1px solid var(--line); border-radius: 12px; padding: 10px; margin-bottom: 8px; }
+  .stack > * + * { margin-top: 8px; }
+  /* split parts */
+  .part { border: 1px solid var(--line); border-radius: 14px; padding: 10px; margin-bottom: 8px; }
   .part.rest { border-style: dashed; }
-  .part-head { display: flex; justify-content: space-between; align-items: center; color: var(--hint); font-size: 12.5px; margin-bottom: 7px; }
-  .part-head button { border: 0; background: transparent; color: var(--hint); font-size: 18px; line-height: 1; padding: 0 2px; }
-  .row { display: flex; gap: 6px; margin-bottom: 6px; }
-  .row > :first-child { flex: 1; } .row > :last-child { flex: 1.45; }
-  .restval { display: flex; align-items: center; padding: 10px 12px; border-radius: 10px; background: var(--field); color: var(--hint); }
-  .link { border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 14px; padding: 6px 0; }
-  .err { color: var(--bad); font-size: 13px; margin-top: 4px; }
+  .phead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .phead button { border: 0; background: transparent; color: var(--hint); padding: 0 2px; }
+  .row2 { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 8px; }
+  .catf { border: 2px solid transparent; cursor: pointer; }
+  .catf.open { border-color: var(--accent); }
+  .catv { display: flex; align-items: center; gap: 7px; margin-top: 4px; min-height: 30px; }
+  .muted { color: var(--hint); }
+  .picker { margin-top: 8px; }
+  .link { border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 14px; padding: 6px 2px; }
+  .err { color: var(--bad); font-size: 12.5px; margin-top: 6px; }
   #msg { margin-top: 12px; font-size: 14px; line-height: 1.5; }
 </style>
 </head>
 <body>
-<div id="status" class="sub">Loading · Đang tải…</div>
+<div id="status" class="lbl" style="font-size:14px">Loading · Đang tải…</div>
 <div id="app" hidden>
-  <div class="amount" id="amount"></div>
-  <div class="sub" id="meta"></div>
+  <div class="box" id="head">
+    <div class="amt"><span class="ic" id="dirIcon"></span><span id="amount">—</span></div>
+    <div class="meta" id="meta">Loading details · Đang tải chi tiết…</div>
+    <div class="desc" id="desc"></div>
+    <div class="meta" id="bal"></div>
+  </div>
   <div class="seg" id="seg">
-    <button data-mode="single">One category · Một danh mục</button>
-    <button data-mode="split">Split · Tách nhiều phần</button>
+    <button data-mode="single"><span class="ic" data-icon="tag"></span><span><span class="en" style="display:block">One category</span><span class="vi">Một danh mục</span></span></button>
+    <button data-mode="split"><span class="ic" data-icon="scissors"></span><span><span class="en" style="display:block">Split</span><span class="vi">Tách nhiều phần</span></span></button>
   </div>
   <section id="single">
     <div id="tiles"></div>
-    <div id="cpBox" hidden>
-      <div class="label">Counterparty · Với ai</div>
-      <div class="chips" id="chips"></div>
-      <input id="person" maxlength="40" placeholder="Other name · Tên khác" autocomplete="off">
+    <div class="stack" style="margin-top:10px">
+      <div class="box" id="cpBox" hidden>
+        <div class="lbl"><b>Counterparty</b> · Với ai</div>
+        <div class="chips" id="chips"></div>
+        <input id="person" maxlength="40" placeholder="Other name · Tên khác" autocomplete="off">
+      </div>
+      <div class="box">
+        <div class="lbl"><b>Note</b> · Ghi chú</div>
+        <textarea id="note" maxlength="150" placeholder="e.g. lunch with Nam · vd: ăn trưa với Nam"></textarea>
+      </div>
     </div>
-    <div class="label">Note · Ghi chú</div>
-    <textarea id="note" maxlength="150" placeholder="e.g. lunch with Nam · vd: ăn trưa với Nam"></textarea>
   </section>
   <section id="split" hidden>
-    <div class="label">Parts · Các phần — the last part is the rest · phần cuối tự tính</div>
+    <div class="section"><b style="color:var(--text);font-weight:600">Parts</b> · Các phần — the last part is the rest · phần cuối tự tính</div>
+    <div id="splitWait" class="lbl" hidden>Loading the amount · Đang tải số tiền…</div>
     <div id="parts"></div>
     <button class="link" id="addPart">+ Add part · Thêm phần</button>
   </section>
   <div id="msg"></div>
 </div>
-<datalist id="people"></datalist>
 <script>
 (function () {
   var tg = window.Telegram && window.Telegram.WebApp;
-  var ICON = 'https://cdn.jsdelivr.net/npm/@tabler/icons@3.19.0/icons/outline/';
-  var ICONS = { 'Salary': 'cash', 'Other Income': 'circle-plus', 'Housing': 'home', 'Food & Dining': 'tools-kitchen-2',
+  var ICONS = {"arrow-down-right":"<path d=\"M7 7l10 10\"/><path d=\"M17 8l0 9l-9 0\"/>","arrow-up-right":"<path d=\"M17 7l-10 10\"/><path d=\"M8 7l9 0l0 9\"/>","basket":"<path d=\"M10 14a2 2 0 1 0 4 0a2 2 0 0 0 -4 0\"/><path d=\"M5.001 8h13.999a2 2 0 0 1 1.977 2.304l-1.255 7.152a3 3 0 0 1 -2.966 2.544h-9.512a3 3 0 0 1 -2.965 -2.544l-1.255 -7.152a2 2 0 0 1 1.977 -2.304z\"/><path d=\"M17 10l-2 -6\"/><path d=\"M7 10l2 -6\"/>","briefcase":"<path d=\"M3 7m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z\"/><path d=\"M8 7v-2a2 2 0 0 1 2 -2h4a2 2 0 0 1 2 2v2\"/><path d=\"M12 12l0 .01\"/><path d=\"M3 13a20 20 0 0 0 18 0\"/>","building-bank":"<path d=\"M3 21l18 0\"/><path d=\"M3 10l18 0\"/><path d=\"M5 6l7 -3l7 3\"/><path d=\"M4 10l0 11\"/><path d=\"M20 10l0 11\"/><path d=\"M8 14l0 3\"/><path d=\"M12 14l0 3\"/><path d=\"M16 14l0 3\"/>","cash":"<path d=\"M7 9m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2z\"/><path d=\"M14 14m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\"/><path d=\"M17 9v-2a2 2 0 0 0 -2 -2h-10a2 2 0 0 0 -2 2v6a2 2 0 0 0 2 2h2\"/>","chevron-down":"<path d=\"M6 9l6 6l6 -6\"/>","circle-arrow-down":"<path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\"/><path d=\"M8 12l4 4\"/><path d=\"M12 8v8\"/><path d=\"M16 12l-4 4\"/>","circle-plus":"<path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\"/><path d=\"M9 12h6\"/><path d=\"M12 9v6\"/>","credit-card":"<path d=\"M3 5m0 3a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3z\"/><path d=\"M3 10l18 0\"/><path d=\"M7 15l.01 0\"/><path d=\"M11 15l2 0\"/>","device-gamepad-2":"<path d=\"M12 5h3.5a5 5 0 0 1 0 10h-5.5l-4.015 4.227a2.3 2.3 0 0 1 -3.923 -2.035l1.634 -8.173a5 5 0 0 1 4.904 -4.019h3.4z\"/><path d=\"M14 15l4.07 4.284a2.3 2.3 0 0 0 3.925 -2.023l-1.6 -8.232\"/><path d=\"M8 9v2\"/><path d=\"M7 10h2\"/><path d=\"M14 10h2\"/>","heart-handshake":"<path d=\"M19.5 12.572l-7.5 7.428l-7.5 -7.428a5 5 0 1 1 7.5 -6.566a5 5 0 1 1 7.5 6.572\"/><path d=\"M12 6l-3.293 3.293a1 1 0 0 0 0 1.414l.543 .543c.69 .69 1.81 .69 2.5 0l1 -1a3.182 3.182 0 0 1 4.5 0l2.25 2.25\"/><path d=\"M12.5 15.5l2 2\"/><path d=\"M15 13l2 2\"/>","help-circle":"<path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\"/><path d=\"M12 16v.01\"/><path d=\"M12 13a2 2 0 0 0 .914 -3.782a1.98 1.98 0 0 0 -2.414 .483\"/>","home":"<path d=\"M5 12l-2 0l9 -9l9 9l-2 0\"/><path d=\"M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7\"/><path d=\"M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6\"/>","moneybag":"<path d=\"M9.5 3h5a1.5 1.5 0 0 1 1.5 1.5a3.5 3.5 0 0 1 -3.5 3.5h-1a3.5 3.5 0 0 1 -3.5 -3.5a1.5 1.5 0 0 1 1.5 -1.5z\"/><path d=\"M4 17v-1a8 8 0 1 1 16 0v1a4 4 0 0 1 -4 4h-8a4 4 0 0 1 -4 -4z\"/>","motorbike":"<path d=\"M5 16m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\"/><path d=\"M19 16m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\"/><path d=\"M7.5 14h5l4 -4h-10.5m1.5 4l4 -4\"/><path d=\"M13 6h2l1.5 3l2 4\"/>","pig-money":"<path d=\"M15 11v.01\"/><path d=\"M5.173 8.378a3 3 0 1 1 4.656 -1.377\"/><path d=\"M16 4v3.803a6.019 6.019 0 0 1 2.658 3.197h1.341a1 1 0 0 1 1 1v2a1 1 0 0 1 -1 1h-1.342c-.336 .95 -.907 1.8 -1.658 2.473v2.027a1.5 1.5 0 0 1 -3 0v-.583a6.04 6.04 0 0 1 -1 .083h-4a6.04 6.04 0 0 1 -1 -.083v.583a1.5 1.5 0 0 1 -3 0v-2l0 -.027a6 6 0 0 1 4 -10.473h2.5l4.5 -3h0z\"/>","scissors":"<path d=\"M6 7m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\"/><path d=\"M6 17m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\"/><path d=\"M8.6 8.6l10.4 10.4\"/><path d=\"M8.6 15.4l10.4 -10.4\"/>","shopping-bag":"<path d=\"M6.331 8h11.339a2 2 0 0 1 1.977 2.304l-1.255 8.152a3 3 0 0 1 -2.966 2.544h-6.852a3 3 0 0 1 -2.965 -2.544l-1.255 -8.152a2 2 0 0 1 1.977 -2.304z\"/><path d=\"M9 11v-5a3 3 0 0 1 6 0v5\"/>","tag":"<path d=\"M7.5 7.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\"/><path d=\"M3 6v5.172a2 2 0 0 0 .586 1.414l7.71 7.71a2.41 2.41 0 0 0 3.408 0l5.592 -5.592a2.41 2.41 0 0 0 0 -3.408l-7.71 -7.71a2 2 0 0 0 -1.414 -.586h-5.172a3 3 0 0 0 -3 3z\"/>","tools-kitchen-2":"<path d=\"M19 3v12h-5c-.023 -3.681 .184 -7.406 5 -12zm0 12v6h-1v-3m-10 -14v17m-3 -17v3a3 3 0 1 0 6 0v-3\"/>","users":"<path d=\"M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0\"/><path d=\"M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2\"/><path d=\"M16 3.13a4 4 0 0 1 0 7.75\"/><path d=\"M21 21v-2a4 4 0 0 0 -3 -3.85\"/>","x":"<path d=\"M18 6l-12 12\"/><path d=\"M6 6l12 12\"/>"};
+  var CAT_ICON = { 'Salary': 'cash', 'Other Income': 'circle-plus', 'Housing': 'home', 'Food & Dining': 'tools-kitchen-2',
     'Transportation': 'motorbike', 'Work': 'briefcase', 'Essentials': 'basket', 'Shopping': 'shopping-bag',
     'Entertainment': 'device-gamepad-2', 'Family': 'users', 'Miscellaneous': 'help-circle', 'Lending': 'heart-handshake',
     'Debt Collection': 'circle-arrow-down', 'Borrowing': 'moneybag', 'Repayment': 'credit-card',
     'Savings Deposit': 'building-bank', 'Savings Withdrawal': 'pig-money' };
-  var GROUPS = { 'Income': 'Income · Thu nhập', 'Expense': 'Expense · Chi tiêu', 'Finance': 'Finance · Tài chính' };
-  var MAX_PARTS = 5, MAX_URL = 7800;
+  // Used only until the first answer from the sheet is kept on the phone (Categories sheet, 2026-10-12).
+  var DEFAULT_CATS = [
+    ['Salary', 'Tiền lương', 'Income', 'In', 0], ['Other Income', 'Thu khác', 'Income', 'In', 0],
+    ['Housing', 'Nhà ở', 'Expense', 'Out', 0], ['Food & Dining', 'Ăn uống', 'Expense', 'Out', 0],
+    ['Transportation', 'Đi lại', 'Expense', 'Out', 0], ['Work', 'Công việc', 'Expense', 'Out', 0],
+    ['Essentials', 'Thiết yếu', 'Expense', 'Out', 0], ['Shopping', 'Mua sắm', 'Expense', 'Out', 0],
+    ['Entertainment', 'Giải trí', 'Expense', 'Out', 0], ['Family', 'Gia đình', 'Expense', 'Out', 0],
+    ['Miscellaneous', 'Phát sinh', 'Expense', 'Out', 0], ['Lending', 'Cho vay', 'Finance', 'Out', 1],
+    ['Debt Collection', 'Thu nợ', 'Finance', 'In', 1], ['Borrowing', 'Đi vay', 'Finance', 'In', 1],
+    ['Repayment', 'Trả nợ', 'Finance', 'Out', 1], ['Savings Deposit', 'Gửi tiết kiệm', 'Finance', 'Out', 0],
+    ['Savings Withdrawal', 'Rút tiết kiệm', 'Finance', 'In', 0]
+  ].map(function (c) { return { name: c[0], vi: c[1], group: c[2], direction: c[3], debt: !!c[4] }; });
+  var GROUPS = { 'Income': ['Income', 'Thu nhập'], 'Expense': ['Expense', 'Chi tiêu'], 'Finance': ['Finance', 'Tài chính'] };
+  var MAX_PARTS = 5, MAX_URL = 7800, KEEP_TX = 60;
   var params = new URLSearchParams(location.search), api = params.get('api') || '', txId = params.get('tx') || '';
   var $ = function (id) { return document.getElementById(id); };
-  var S = { tx: null, cats: [], byName: {}, people: [], mode: 'single', cat: '', parts: [] };
+  var S = { dir: '', tx: null, cats: [], byName: {}, people: [], mode: 'single', cat: '', person: '', note: '', parts: [], open: -1, touched: false };
 
-  // ---------- helpers ----------
+  // ---------- small helpers ----------
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function iconUrl(name) {
+    return 'url("data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + (ICONS[name] || ICONS['help-circle']) + '</svg>') + '")';
+  }
+  function icon(name, cls) { var i = el('span', 'ic' + (cls ? ' ' + cls : '')); i.style.setProperty('--icon', iconUrl(name)); return i; }
+  function twoLines(en, vi) { var w = el('span'); var a = el('span', 'en', en); a.style.display = 'block'; w.appendChild(a); w.appendChild(el('span', 'vi', vi)); return w; }
+  function label(en, vi) { var d = el('div', 'lbl'); d.appendChild(el('b', '', en)); d.appendChild(document.createTextNode(' · ' + vi)); return d; }
   function vnd(n) { return Math.round(n).toLocaleString('vi-VN') + 'đ'; }
-  // "30k" 30.000 · "30.000" / "30000" · "1tr2" 1.200.000 · "1,5tr" · "100 nghìn" (same rules as the server)
-  function parseAmount(s) {
+  function parseAmount(s) {   // "70000" / "70.000" / "70k" / "1tr2" (same rules as the server)
     var t = String(s || '').normalize('NFC').toLowerCase().replace(/\s+/g, '').replace(/(vnđ|vnd|đ)$/, '');
     if (!t) return null;
     var m = t.match(/^(\d+)(?:[.,](\d+))?(k|nghìn|nghin|ngàn|ngan|tr|triệu|trieu|m)(\d*)$/);
@@ -118,14 +165,28 @@
     if (/^\d{1,3}([.,]\d{3})+$/.test(t) || /^\d+$/.test(t)) return Number(t.replace(/[.,]/g, ''));
     return NaN;
   }
-  function say(html, bad) { $('msg').textContent = html; $('msg').style.color = bad ? 'var(--bad)' : ''; }
+  function say(text, bad) { $('msg').textContent = text; $('msg').style.color = bad ? 'var(--bad)' : ''; }
+  function touch() { S.touched = true; }
+  [].forEach.call(document.querySelectorAll('[data-icon]'), function (e) { e.style.setProperty('--icon', iconUrl(e.getAttribute('data-icon'))); });
 
+  // ---------- kept on the phone ----------
+  function load(key) { try { return JSON.parse(localStorage.getItem('ft.' + key)); } catch (e) { return null; } }
+  function keep(key, v) { try { localStorage.setItem('ft.' + key, JSON.stringify(v)); } catch (e) {} }
+  function keepTx(tx) {
+    keep('tx.' + tx.id, tx);
+    var ids = (load('txids') || []).filter(function (x) { return x !== tx.id; });
+    ids.push(tx.id);
+    while (ids.length > KEEP_TX) { try { localStorage.removeItem('ft.tx.' + ids.shift()); } catch (e) { ids.shift(); } }
+    keep('txids', ids);
+  }
+
+  // ---------- server ----------
   var seq = 0;
-  function call(payload) {
+  function apiUrl() { return api + (api.indexOf('?') < 0 ? '?' : '&') + 'api=form'; }
+  function call(payload) {   // JSONP read/write that waits for the answer
     payload.initData = tg ? tg.initData : '';
-    var src = api + (api.indexOf('?') < 0 ? '?' : '&') + 'api=form&cb=';
     var name = '__ft' + Date.now() + '_' + (seq++);
-    src += name + '&p=' + encodeURIComponent(JSON.stringify(payload));
+    var src = apiUrl() + '&cb=' + name + '&p=' + encodeURIComponent(JSON.stringify(payload));
     if (src.length > MAX_URL) return Promise.reject('Notes are too long, please shorten them · Ghi chú quá dài, hãy rút gọn');
     return new Promise(function (resolve, reject) {
       var s = document.createElement('script');
@@ -138,182 +199,257 @@
     });
   }
 
+  // ---------- header ----------
+  function renderHead() {
+    var tx = S.tx, out = S.dir !== 'In';
+    $('dirIcon').style.setProperty('--icon', iconUrl(out ? 'arrow-down-right' : 'arrow-up-right'));
+    if (!tx) {
+      $('amount').textContent = '—';
+      $('meta').textContent = (out ? 'Out · Tiền ra' : 'In · Tiền vào') + ' · Loading details · Đang tải chi tiết…';
+      return;
+    }
+    $('amount').textContent = vnd(tx.amount);
+    $('meta').textContent = (out ? 'Out · Tiền ra' : 'In · Tiền vào') + ' · ' + tx.when;
+    $('desc').textContent = tx.desc || '';
+    $('bal').textContent = 'Balance · Số dư ' + vnd(tx.balance);
+  }
+
   // ---------- one category ----------
-  function renderTiles() {
-    var box = $('tiles'); box.innerHTML = '';
-    var order = [];
-    S.cats.forEach(function (c) { if (order.indexOf(c.group) < 0) order.push(c.group); });
+  function catsOfDir() { return S.cats.filter(function (c) { return c.direction === S.dir; }); }
+  function tileGrid(selected, onPick) {
+    var box = el('div'), list = catsOfDir(), order = [];
+    list.forEach(function (c) { if (order.indexOf(c.group) < 0) order.push(c.group); });
     order.forEach(function (g) {
-      box.appendChild(el('div', 'group', GROUPS[g] || g));
+      var head = el('div', 'section'), gl = GROUPS[g] || [g, ''];
+      head.appendChild(el('b', '', gl[0])); head.firstChild.style.cssText = 'color:var(--text);font-weight:600';
+      head.appendChild(document.createTextNode(gl[1] ? ' · ' + gl[1] : ''));
+      box.appendChild(head);
       var grid = el('div', 'grid');
-      S.cats.filter(function (c) { return c.group === g; }).forEach(function (c) {
-        var t = el('div', 'tile' + (S.cat === c.name ? ' on' : ''));
-        var ic = el('div', 'ic'); ic.style.setProperty('--icon', 'url(' + ICON + (ICONS[c.name] || 'circle') + '.svg)');
-        t.appendChild(ic); t.appendChild(el('div', 'en', c.name)); t.appendChild(el('div', 'vi', c.vi || ''));
-        t.onclick = function () {
-          S.cat = c.name;
-          if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
-          renderTiles(); renderPerson(); say('');
-        };
+      list.filter(function (c) { return c.group === g; }).forEach(function (c) {
+        var t = el('div', 'tile' + (selected === c.name ? ' on' : ''));
+        t.appendChild(icon(CAT_ICON[c.name] || 'help-circle'));
+        t.appendChild(el('div', 'en', c.name)); t.appendChild(el('div', 'vi', c.vi || ''));
+        t.onclick = function () { if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged(); onPick(c.name); };
         grid.appendChild(t);
       });
       box.appendChild(grid);
     });
+    return box;
   }
-  function renderPerson() {
-    var c = S.byName[S.cat], show = !!(c && c.debt);
-    $('cpBox').hidden = !show;
-    if (!show) return;
+  function renderSingle() {
+    var box = $('tiles'); box.innerHTML = '';
+    box.appendChild(tileGrid(S.cat, function (name) { S.cat = name; touch(); renderSingle(); say(''); }));
+    var c = S.byName[S.cat];
+    $('cpBox').hidden = !(c && c.debt);
     var chips = $('chips'); chips.innerHTML = '';
     S.people.forEach(function (p) {
       var b = el('button', 'chip' + ($('person').value.trim().toLowerCase() === p.toLowerCase() ? ' on' : ''), p);
-      b.onclick = function () { $('person').value = p; renderPerson(); };
+      b.onclick = function () { $('person').value = p; touch(); renderSingle(); };
       chips.appendChild(b);
     });
   }
+  $('person').oninput = function () { touch(); };
+  $('note').oninput = function () { touch(); };
 
   // ---------- split ----------
   function restOf() {
+    if (!S.tx) return null;
     var used = 0;
     S.parts.slice(0, -1).forEach(function (p) { var a = parseAmount(p.amount); if (a > 0) used += a; });
     return S.tx.amount - used;
   }
-  function catSelect(p) {
-    var s = el('select');
-    s.appendChild(new Option('Category · Danh mục', ''));
-    var order = [];
-    S.cats.forEach(function (c) { if (order.indexOf(c.group) < 0) order.push(c.group); });
-    order.forEach(function (g) {
-      var og = document.createElement('optgroup'); og.label = GROUPS[g] || g;
-      S.cats.filter(function (c) { return c.group === g; }).forEach(function (c) { og.appendChild(new Option(c.name + ' · ' + (c.vi || ''), c.name)); });
-      s.appendChild(og);
-    });
-    s.value = p.cat || '';
-    s.onchange = function () { p.cat = s.value; renderParts(); say(''); };
-    return s;
-  }
   function renderParts() {
+    $('splitWait').hidden = !!S.tx;
     var box = $('parts'); box.innerHTML = '';
+    if (!S.tx) { $('addPart').hidden = true; return; }
     var last = S.parts.length - 1, rest = restOf();
     S.parts.forEach(function (p, i) {
       var isRest = i === last, card = el('div', 'part' + (isRest ? ' rest' : ''));
-      var head = el('div', 'part-head', 'Part ' + (i + 1) + ' · Phần ' + (i + 1) + (isRest ? ' — the rest · phần còn lại' : ''));
+      var head = el('div', 'phead'), t = el('div', 'lbl');
+      t.appendChild(el('b', '', 'Part ' + (i + 1))); t.appendChild(document.createTextNode(' · Phần ' + (i + 1) + (isRest ? ' — the rest · phần còn lại' : '')));
+      head.appendChild(t);
       if (S.parts.length > 2 && !isRest) {
-        var x = el('button', '', '×'); x.setAttribute('aria-label', 'Remove part · Xoá phần');
-        x.onclick = function () { S.parts.splice(i, 1); renderParts(); };
+        var x = el('button'); x.setAttribute('aria-label', 'Remove part · Xoá phần'); x.appendChild(icon('x'));
+        x.onclick = function () { S.parts.splice(i, 1); S.open = -1; touch(); renderParts(); };
         head.appendChild(x);
       }
       card.appendChild(head);
-      var row = el('div', 'row');
+      var row = el('div', 'row2'), amt = el('div', 'box');
       if (isRest) {
-        row.appendChild(el('div', 'restval', rest > 0 ? vnd(rest) : '—'));
+        amt.appendChild(label('Rest', 'Còn lại'));
+        amt.appendChild(el('div', 'big' + (rest > 0 ? '' : ' muted'), rest > 0 ? rest.toLocaleString('vi-VN') : '—')).style.marginTop = '3px';
       } else {
-        var a = el('input'); a.inputMode = 'decimal'; a.placeholder = 'Amount · Số tiền (vd 50k)'; a.value = p.amount || '';
-        a.oninput = function () { p.amount = a.value; var r = restOf(); card.parentNode.lastChild.querySelector('.restval').textContent = r > 0 ? vnd(r) : '—'; say(''); };
+        amt.appendChild(label('Amount', 'Số tiền'));
+        var a = el('input', 'big'); a.inputMode = 'numeric'; a.placeholder = '0'; a.value = p.amount || '';
+        a.oninput = function () {
+          p.amount = a.value; touch(); say('');
+          var r = restOf(), rv = box.lastChild.querySelector('.big');
+          rv.textContent = r > 0 ? r.toLocaleString('vi-VN') : '—'; rv.className = 'big' + (r > 0 ? '' : ' muted');
+        };
         a.onblur = function () { var v = parseAmount(a.value); if (v > 0) { a.value = v.toLocaleString('vi-VN'); p.amount = a.value; } };
-        row.appendChild(a);
+        amt.appendChild(a);
       }
-      row.appendChild(catSelect(p));
+      row.appendChild(amt);
+      var cf = el('div', 'box catf' + (S.open === i ? ' open' : '')), c = S.byName[p.cat];
+      cf.appendChild(label('Category', 'Danh mục'));
+      var cv = el('div', 'catv');
+      if (c) { cv.appendChild(icon(CAT_ICON[c.name] || 'help-circle')); cv.appendChild(twoLines(c.name, c.vi || '')); }
+      else { cv.appendChild(twoLines('Choose', 'Chọn danh mục')); cv.firstChild.className = 'muted'; }
+      cf.appendChild(cv);
+      cf.onclick = function () { S.open = S.open === i ? -1 : i; renderParts(); };
+      row.appendChild(cf);
       card.appendChild(row);
-      var c = S.byName[p.cat];
-      if (c && c.debt) {
-        var who = el('input'); who.maxLength = 40; who.placeholder = 'Counterparty · Với ai'; who.value = p.person || '';
-        who.setAttribute('list', 'people'); who.autocomplete = 'off';
-        who.oninput = function () { p.person = who.value; };
-        who.style.marginBottom = '6px';
-        card.appendChild(who);
+      if (S.open === i) {
+        var pk = tileGrid(p.cat, function (name) { p.cat = name; S.open = -1; touch(); renderParts(); say(''); });
+        pk.className = 'picker';
+        card.appendChild(pk);
       }
-      var n = el('input'); n.maxLength = 80; n.placeholder = 'Note · Ghi chú'; n.value = p.note || '';
-      n.oninput = function () { p.note = n.value; };
-      card.appendChild(n);
-      if (isRest && rest <= 0) card.appendChild(el('div', 'err', 'The parts above already use the whole amount · Các phần trên đã dùng hết số tiền'));
+      var stack = el('div', 'stack'); stack.style.marginTop = '8px';
+      if (c && c.debt) {
+        var who = el('div', 'box'); who.appendChild(label('Counterparty', 'Với ai'));
+        var chips = el('div', 'chips');
+        S.people.forEach(function (name) {
+          var b = el('button', 'chip' + ((p.person || '').trim().toLowerCase() === name.toLowerCase() ? ' on' : ''), name);
+          b.onclick = function () { p.person = name; touch(); renderParts(); };
+          chips.appendChild(b);
+        });
+        who.appendChild(chips);
+        var wi = el('input'); wi.maxLength = 40; wi.placeholder = 'Other name · Tên khác'; wi.value = p.person || ''; wi.autocomplete = 'off';
+        wi.oninput = function () { p.person = wi.value; touch(); };
+        who.appendChild(wi);
+        stack.appendChild(who);
+      }
+      var nb = el('div', 'box'); nb.appendChild(label('Note', 'Ghi chú'));
+      var n = el('input'); n.maxLength = 80; n.placeholder = 'e.g. bida · vd: bida'; n.value = p.note || '';
+      n.oninput = function () { p.note = n.value; touch(); };
+      nb.appendChild(n); stack.appendChild(nb);
+      card.appendChild(stack);
+      if (isRest && rest !== null && rest <= 0) card.appendChild(el('div', 'err', 'The parts above already use the whole amount · Các phần trên đã dùng hết số tiền'));
       box.appendChild(card);
     });
     $('addPart').hidden = S.parts.length >= MAX_PARTS;
   }
-  $('addPart').onclick = function () {
-    S.parts.splice(S.parts.length - 1, 0, { amount: '', cat: '', person: '', note: '' });
-    renderParts();
-  };
+  $('addPart').onclick = function () { S.parts.splice(S.parts.length - 1, 0, { amount: '', cat: '', person: '', note: '' }); touch(); renderParts(); };
 
-  // ---------- mode, load, save ----------
+  // ---------- mode ----------
   function setMode(m) {
     S.mode = m;
     [].forEach.call($('seg').children, function (b) { b.classList.toggle('on', b.getAttribute('data-mode') === m); });
     $('single').hidden = m !== 'single';
     $('split').hidden = m !== 'split';
-    if (m === 'split') renderParts();
+    if (m === 'split') renderParts(); else renderSingle();
     say('');
   }
-  [].forEach.call($('seg').children, function (b) { b.onclick = function () { setMode(b.getAttribute('data-mode')); }; });
+  [].forEach.call($('seg').children, function (b) { b.onclick = function () { touch(); setMode(b.getAttribute('data-mode')); }; });
 
-  function fill(r) {
-    S.tx = r.tx; S.cats = r.cats; S.people = r.people || [];
-    S.cats.forEach(function (c) { S.byName[c.name] = c; });
-    var dl = $('people'); S.people.forEach(function (p) { dl.appendChild(new Option(p)); });
-    $('amount').textContent = (S.tx.direction === 'In' ? '+' : '−') + vnd(S.tx.amount);
-    $('meta').textContent = (S.tx.direction === 'In' ? 'In · Tiền vào' : 'Out · Tiền ra') + ' · ' + S.tx.when +
-                            (S.tx.desc ? ' · ' + S.tx.desc : '') + '\nBalance · Số dư: ' + vnd(S.tx.balance);
-    $('meta').style.whiteSpace = 'pre-line';
-    S.cat = S.tx.category || '';
-    $('person').value = S.tx.counterparty || '';
-    $('note').value = S.tx.note || '';
-    $('person').oninput = renderPerson;
-    var parts = S.tx.parts || [];
-    if (parts.length) {   // an existing split: its parts, then the rest (the last part when nothing is left)
+  // ---------- fill from data ----------
+  function setCats(cats) { S.cats = cats; S.byName = {}; cats.forEach(function (c) { S.byName[c.name] = c; }); }
+  function fillChoices(tx) {   // the saved choices of this transaction (only before the owner touches anything)
+    S.cat = tx.category || '';
+    $('person').value = tx.counterparty || '';
+    $('note').value = tx.note || '';
+    var parts = tx.parts || [];
+    if (parts.length) {
       S.parts = parts.map(function (p) { return { amount: p.amount.toLocaleString('vi-VN'), cat: p.category, person: p.counterparty, note: p.note }; });
       var used = parts.reduce(function (a, p) { return a + p.amount; }, 0);
-      if (used < S.tx.amount || S.parts.length < 2) S.parts.push({ amount: '', cat: '', person: '', note: '' });
+      if (used < tx.amount || S.parts.length < 2) S.parts.push({ amount: '', cat: '', person: '', note: '' });
     } else {
       S.parts = [{ amount: '', cat: '', person: '', note: '' }, { amount: '', cat: '', person: '', note: '' }];
     }
-    renderTiles(); renderPerson();
     setMode(parts.length ? 'split' : 'single');
   }
+  function show() {
+    $('status').hidden = true;
+    $('app').hidden = false;
+    renderHead();
+    tg.MainButton.show();
+  }
 
+  // ---------- save ----------
   function payload() {
     if (S.mode === 'single') {
       if (!S.cat) return 'Pick a category · Chọn một danh mục';
-      return { action: 'save', tx: S.tx.id, mode: 'single', category: S.cat,
-               counterparty: S.byName[S.cat] && S.byName[S.cat].debt ? $('person').value.trim() : '', note: $('note').value.trim() };
+      var c = S.byName[S.cat];
+      return { action: 'save', tx: txId, mode: 'single', category: S.cat,
+               counterparty: c && c.debt ? $('person').value.trim() : '', note: $('note').value.trim() };
     }
+    if (!S.tx) return 'Wait for the amount · Đợi tải xong số tiền';
     var out = [], rest = restOf();
     for (var i = 0; i < S.parts.length; i++) {
       var p = S.parts[i], isRest = i === S.parts.length - 1, a = isRest ? rest : parseAmount(p.amount);
       if (!(a > 0)) return isRest ? 'The parts above already use the whole amount · Các phần trên đã dùng hết số tiền'
                                   : 'Part ' + (i + 1) + ': enter an amount · Phần ' + (i + 1) + ': nhập số tiền';
       if (!p.cat) return 'Part ' + (i + 1) + ': pick a category · Phần ' + (i + 1) + ': chọn danh mục';
-      out.push({ amount: a, category: p.cat, counterparty: S.byName[p.cat] && S.byName[p.cat].debt ? (p.person || '').trim() : '', note: (p.note || '').trim() });
+      var pc = S.byName[p.cat];
+      out.push({ amount: a, category: p.cat, counterparty: pc && pc.debt ? (p.person || '').trim() : '', note: (p.note || '').trim() });
     }
-    return { action: 'save', tx: S.tx.id, mode: 'split', parts: out };
+    return { action: 'save', tx: txId, mode: 'split', parts: out };
   }
-
+  function rememberSaved(body) {   // reopening this transaction shows what was just saved
+    if (!S.tx) return;
+    var tx = JSON.parse(JSON.stringify(S.tx));
+    if (body.mode === 'single') { tx.category = body.category; tx.counterparty = body.counterparty; tx.note = body.note; tx.parts = []; }
+    else { tx.category = ''; tx.note = ''; tx.parts = body.parts.map(function (p) { return { amount: p.amount, category: p.category, counterparty: p.counterparty, note: p.note }; }); }
+    tx.status = 'Categorized';
+    keepTx(tx);
+  }
   function save() {
     var body = payload();
     if (typeof body === 'string') { say(body, true); if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error'); return; }
+    body.initData = tg.initData;
+    body.via = 'beacon';
+    var data = JSON.stringify(body), sent = false;
+    if (data.length < 60000 && navigator.sendBeacon) {
+      try { sent = navigator.sendBeacon(apiUrl(), data); } catch (e) { sent = false; }
+    }
+    if (sent) {   // the browser keeps sending after the page closes; the bot reports a failure in the chat
+      rememberSaved(body);
+      if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+      say('✓ Saved · Đã lưu');
+      setTimeout(function () { tg.close(); }, 150);
+      return;
+    }
+    body.via = 'page';   // no beacon: wait for the answer here
     tg.MainButton.showProgress();
     call(body).then(function (r) {
       tg.MainButton.hideProgress();
       if (!r.ok) { say(r.why || 'Not saved · Chưa lưu được', true); return; }
+      rememberSaved(body);
       if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
       say('✓ Saved · Đã lưu');
       setTimeout(function () { tg.close(); }, 300);
     }).catch(function (e) { tg.MainButton.hideProgress(); say(String(e), true); });
   }
 
-  if (!tg || !tg.initData) { $('status').textContent = 'Open it from the bot button · Hãy mở bằng nút trong chat với bot.'; $('status').style.color = 'var(--bad)'; return; }
-  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(api) || !txId) { $('status').textContent = 'Missing link data · Thiếu dữ liệu link.'; $('status').style.color = 'var(--bad)'; return; }
+  // ---------- start ----------
+  function fail(text) { $('status').textContent = text; $('status').style.color = 'var(--bad)'; $('status').hidden = false; }
+  if (!tg || !tg.initData) { fail('Open it from the bot button · Hãy mở bằng nút trong chat với bot.'); return; }
+  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(api) || !txId) { fail('Missing link data · Thiếu dữ liệu link.'); return; }
   tg.ready();
   tg.expand();
   tg.MainButton.setText('Save · Lưu');
   tg.MainButton.onClick(save);
+
+  setCats(load('cats') || DEFAULT_CATS);
+  S.people = load('people') || [];
+  var cached = load('tx.' + txId), d = params.get('d');
+  S.dir = cached ? cached.direction : (d === 'in' ? 'In' : d === 'out' ? 'Out' : '');
+  if (cached) S.tx = cached;
+  if (S.dir) { show(); if (cached) fillChoices(cached); else setMode('single'); }   // instant: tiles from the phone
+
   call({ action: 'load', tx: txId }).then(function (r) {
-    if (!r.ok) { $('status').textContent = '⛔ ' + r.why; $('status').style.color = 'var(--bad)'; return; }
-    $('status').hidden = true;
-    $('app').hidden = false;
-    fill(r);
-    tg.MainButton.show();
-  }).catch(function (e) { $('status').textContent = '⛔ ' + e; $('status').style.color = 'var(--bad)'; });
+    if (!r.ok) { if (!S.dir) fail('⛔ ' + r.why); else say(r.why, true); return; }
+    setCats(r.cats); keep('cats', r.cats);
+    S.people = r.people || []; keep('people', S.people);
+    keepTx(r.tx);
+    var first = !S.dir;
+    S.dir = r.tx.direction; S.tx = r.tx;
+    if (first) show();
+    renderHead();
+    if (!S.touched) fillChoices(r.tx);          // fresh saved choices, unless the owner already started
+    else if (S.mode === 'split') renderParts(); // the amount just arrived
+    else renderSingle();                        // names may have arrived
+  }).catch(function (e) { if (!S.dir) fail('⛔ ' + e); else say(String(e), true); });
 })();
 </script>
 </body>

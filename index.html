@@ -4,10 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Finance Tracker</title>
-<!-- Finance Tracker — transaction form (Telegram Mini App), hosted on GitHub Pages. Version 2026-10-12b.
+<!-- Finance Tracker — transaction form + period form (Telegram Mini App), hosted on GitHub Pages.
+     Version 2026-10-12c.
      UI only: no data lives in this file. The bot opens it with ?tx=<Transaction ID>&d=<out|in>&api=<Apps
      Script /exec URL> (never the amount or the text: this URL reaches GitHub's servers). Every call
      carries Telegram's signed initData, verified server-side as the owner.
+     Without ?tx= it is the PERIOD form (owner-approved 2026-10-12): the report channel's board cannot
+     carry a Mini App button (Telegram allows those in private chats only), so its "Change Period"
+     button is a t.me/<bot>?startapp=period link to the bot's main Mini App, registered in @BotFather
+     with this page's address + ?api=<exec URL>. It sets Report From/To (quick picks or two dates).
      Fast open: categories, recent names and every transaction already opened are kept on the phone
      (localStorage), so the tiles show at once; the transaction's own details arrive ~2 s later.
      Fast save: the data is sent with navigator.sendBeacon (keeps going after the page closes) and the
@@ -40,8 +45,8 @@
   .lbl b { color: var(--text); font-weight: 600; }
   .section { font-size: 12px; color: var(--hint); margin: 14px 2px 6px; }
   /* header */
-  #head .amt { display: flex; align-items: center; gap: 6px; font-size: 24px; font-weight: 600; letter-spacing: -.3px; }
-  #head .meta { color: var(--hint); font-size: 12.5px; margin-top: 3px; line-height: 1.4; word-break: break-word; }
+  #head .amt, #pHead .amt { display: flex; align-items: center; gap: 6px; font-size: 24px; font-weight: 600; letter-spacing: -.3px; }
+  #head .meta, #pHead .meta { color: var(--hint); font-size: 12.5px; margin-top: 3px; line-height: 1.4; word-break: break-word; }
   #head .desc { font-size: 14px; margin-top: 4px; line-height: 1.35; word-break: break-word; }
   /* mode switch: two tiles like the category tiles */
   .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0 2px; }
@@ -80,7 +85,14 @@
   .picker { margin-top: 8px; }
   .link { border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 14px; padding: 6px 2px; }
   .err { color: var(--bad); font-size: 12.5px; margin-top: 6px; }
-  #msg { margin-top: 12px; font-size: 14px; line-height: 1.5; }
+  #msg, #pMsg { margin-top: 12px; font-size: 14px; line-height: 1.5; }
+  /* period form: quick-pick tiles + two native date pickers */
+  .ptile .dates { font-size: 11.5px; color: var(--hint); margin-top: 3px; }
+  .prow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 0; }
+  .prow + .prow { border-top: 1px solid var(--line); }
+  .prow input { width: auto; min-width: 140px; margin: 0; background: var(--bg); border-radius: 8px; padding: 6px 10px;
+                text-align: right; color-scheme: light dark; }
+  .prow input::-webkit-date-and-time-value { text-align: right; }
 </style>
 </head>
 <body>
@@ -118,10 +130,26 @@
   </section>
   <div id="msg"></div>
 </div>
+<div id="periodApp" hidden>
+  <div class="box" id="pHead">
+    <div class="lbl"><b>Report period</b> · Kỳ báo cáo</div>
+    <div class="amt"><span class="ic" data-icon="calendar"></span><span id="pNow">—</span></div>
+    <div class="meta" id="pState">Loading · Đang tải…</div>
+  </div>
+  <div class="section"><b style="color:var(--text);font-weight:600">Quick pick</b> · Chọn nhanh</div>
+  <div class="grid" id="pTiles"></div>
+  <div class="section"><b style="color:var(--text);font-weight:600">Custom dates</b> · Chọn ngày khác</div>
+  <div class="box">
+    <label class="prow"><span class="lbl"><b>From</b> · Từ ngày</span><input type="date" id="pFrom"></label>
+    <label class="prow"><span class="lbl"><b>To</b> · Đến ngày</span><input type="date" id="pTo"></label>
+    <div class="lbl" id="pDays" style="margin-top:4px"></div>
+  </div>
+  <div id="pMsg"></div>
+</div>
 <script>
 (function () {
   var tg = window.Telegram && window.Telegram.WebApp;
-  var ICONS = {"arrow-down-right":"<path d=\"M7 7l10 10\"/><path d=\"M17 8l0 9l-9 0\"/>","arrow-up-right":"<path d=\"M17 7l-10 10\"/><path d=\"M8 7l9 0l0 9\"/>","basket":"<path d=\"M10 14a2 2 0 1 0 4 0a2 2 0 0 0 -4 0\"/><path d=\"M5.001 8h13.999a2 2 0 0 1 1.977 2.304l-1.255 7.152a3 3 0 0 1 -2.966 2.544h-9.512a3 3 0 0 1 -2.965 -2.544l-1.255 -7.152a2 2 0 0 1 1.977 -2.304z\"/><path d=\"M17 10l-2 -6\"/><path d=\"M7 10l2 -6\"/>","briefcase":"<path d=\"M3 7m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z\"/><path d=\"M8 7v-2a2 2 0 0 1 2 -2h4a2 2 0 0 1 2 2v2\"/><path d=\"M12 12l0 .01\"/><path d=\"M3 13a20 20 0 0 0 18 0\"/>","building-bank":"<path d=\"M3 21l18 0\"/><path d=\"M3 10l18 0\"/><path d=\"M5 6l7 -3l7 3\"/><path d=\"M4 10l0 11\"/><path d=\"M20 10l0 11\"/><path d=\"M8 14l0 3\"/><path d=\"M12 14l0 3\"/><path d=\"M16 14l0 3\"/>","cash":"<path d=\"M7 9m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2z\"/><path d=\"M14 14m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\"/><path d=\"M17 9v-2a2 2 0 0 0 -2 -2h-10a2 2 0 0 0 -2 2v6a2 2 0 0 0 2 2h2\"/>","chevron-down":"<path d=\"M6 9l6 6l6 -6\"/>","circle-arrow-down":"<path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\"/><path d=\"M8 12l4 4\"/><path d=\"M12 8v8\"/><path d=\"M16 12l-4 4\"/>","circle-plus":"<path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\"/><path d=\"M9 12h6\"/><path d=\"M12 9v6\"/>","credit-card":"<path d=\"M3 5m0 3a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3z\"/><path d=\"M3 10l18 0\"/><path d=\"M7 15l.01 0\"/><path d=\"M11 15l2 0\"/>","device-gamepad-2":"<path d=\"M12 5h3.5a5 5 0 0 1 0 10h-5.5l-4.015 4.227a2.3 2.3 0 0 1 -3.923 -2.035l1.634 -8.173a5 5 0 0 1 4.904 -4.019h3.4z\"/><path d=\"M14 15l4.07 4.284a2.3 2.3 0 0 0 3.925 -2.023l-1.6 -8.232\"/><path d=\"M8 9v2\"/><path d=\"M7 10h2\"/><path d=\"M14 10h2\"/>","heart-handshake":"<path d=\"M19.5 12.572l-7.5 7.428l-7.5 -7.428a5 5 0 1 1 7.5 -6.566a5 5 0 1 1 7.5 6.572\"/><path d=\"M12 6l-3.293 3.293a1 1 0 0 0 0 1.414l.543 .543c.69 .69 1.81 .69 2.5 0l1 -1a3.182 3.182 0 0 1 4.5 0l2.25 2.25\"/><path d=\"M12.5 15.5l2 2\"/><path d=\"M15 13l2 2\"/>","help-circle":"<path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\"/><path d=\"M12 16v.01\"/><path d=\"M12 13a2 2 0 0 0 .914 -3.782a1.98 1.98 0 0 0 -2.414 .483\"/>","home":"<path d=\"M5 12l-2 0l9 -9l9 9l-2 0\"/><path d=\"M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7\"/><path d=\"M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6\"/>","moneybag":"<path d=\"M9.5 3h5a1.5 1.5 0 0 1 1.5 1.5a3.5 3.5 0 0 1 -3.5 3.5h-1a3.5 3.5 0 0 1 -3.5 -3.5a1.5 1.5 0 0 1 1.5 -1.5z\"/><path d=\"M4 17v-1a8 8 0 1 1 16 0v1a4 4 0 0 1 -4 4h-8a4 4 0 0 1 -4 -4z\"/>","motorbike":"<path d=\"M5 16m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\"/><path d=\"M19 16m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\"/><path d=\"M7.5 14h5l4 -4h-10.5m1.5 4l4 -4\"/><path d=\"M13 6h2l1.5 3l2 4\"/>","pig-money":"<path d=\"M15 11v.01\"/><path d=\"M5.173 8.378a3 3 0 1 1 4.656 -1.377\"/><path d=\"M16 4v3.803a6.019 6.019 0 0 1 2.658 3.197h1.341a1 1 0 0 1 1 1v2a1 1 0 0 1 -1 1h-1.342c-.336 .95 -.907 1.8 -1.658 2.473v2.027a1.5 1.5 0 0 1 -3 0v-.583a6.04 6.04 0 0 1 -1 .083h-4a6.04 6.04 0 0 1 -1 -.083v.583a1.5 1.5 0 0 1 -3 0v-2l0 -.027a6 6 0 0 1 4 -10.473h2.5l4.5 -3h0z\"/>","scissors":"<path d=\"M6 7m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\"/><path d=\"M6 17m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\"/><path d=\"M8.6 8.6l10.4 10.4\"/><path d=\"M8.6 15.4l10.4 -10.4\"/>","shopping-bag":"<path d=\"M6.331 8h11.339a2 2 0 0 1 1.977 2.304l-1.255 8.152a3 3 0 0 1 -2.966 2.544h-6.852a3 3 0 0 1 -2.965 -2.544l-1.255 -8.152a2 2 0 0 1 1.977 -2.304z\"/><path d=\"M9 11v-5a3 3 0 0 1 6 0v5\"/>","tag":"<path d=\"M7.5 7.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\"/><path d=\"M3 6v5.172a2 2 0 0 0 .586 1.414l7.71 7.71a2.41 2.41 0 0 0 3.408 0l5.592 -5.592a2.41 2.41 0 0 0 0 -3.408l-7.71 -7.71a2 2 0 0 0 -1.414 -.586h-5.172a3 3 0 0 0 -3 3z\"/>","tools-kitchen-2":"<path d=\"M19 3v12h-5c-.023 -3.681 .184 -7.406 5 -12zm0 12v6h-1v-3m-10 -14v17m-3 -17v3a3 3 0 1 0 6 0v-3\"/>","users":"<path d=\"M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0\"/><path d=\"M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2\"/><path d=\"M16 3.13a4 4 0 0 1 0 7.75\"/><path d=\"M21 21v-2a4 4 0 0 0 -3 -3.85\"/>","x":"<path d=\"M18 6l-12 12\"/><path d=\"M6 6l12 12\"/>"};
+  var ICONS = {"arrow-down-right":"<path d=\"M7 7l10 10\"/><path d=\"M17 8l0 9l-9 0\"/>","arrow-up-right":"<path d=\"M17 7l-10 10\"/><path d=\"M8 7l9 0l0 9\"/>","basket":"<path d=\"M10 14a2 2 0 1 0 4 0a2 2 0 0 0 -4 0\"/><path d=\"M5.001 8h13.999a2 2 0 0 1 1.977 2.304l-1.255 7.152a3 3 0 0 1 -2.966 2.544h-9.512a3 3 0 0 1 -2.965 -2.544l-1.255 -7.152a2 2 0 0 1 1.977 -2.304z\"/><path d=\"M17 10l-2 -6\"/><path d=\"M7 10l2 -6\"/>","briefcase":"<path d=\"M3 7m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z\"/><path d=\"M8 7v-2a2 2 0 0 1 2 -2h4a2 2 0 0 1 2 2v2\"/><path d=\"M12 12l0 .01\"/><path d=\"M3 13a20 20 0 0 0 18 0\"/>","building-bank":"<path d=\"M3 21l18 0\"/><path d=\"M3 10l18 0\"/><path d=\"M5 6l7 -3l7 3\"/><path d=\"M4 10l0 11\"/><path d=\"M20 10l0 11\"/><path d=\"M8 14l0 3\"/><path d=\"M12 14l0 3\"/><path d=\"M16 14l0 3\"/>","cash":"<path d=\"M7 9m0 2a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2z\"/><path d=\"M14 14m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0\"/><path d=\"M17 9v-2a2 2 0 0 0 -2 -2h-10a2 2 0 0 0 -2 2v6a2 2 0 0 0 2 2h2\"/>","chevron-down":"<path d=\"M6 9l6 6l6 -6\"/>","circle-arrow-down":"<path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\"/><path d=\"M8 12l4 4\"/><path d=\"M12 8v8\"/><path d=\"M16 12l-4 4\"/>","circle-plus":"<path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\"/><path d=\"M9 12h6\"/><path d=\"M12 9v6\"/>","credit-card":"<path d=\"M3 5m0 3a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3z\"/><path d=\"M3 10l18 0\"/><path d=\"M7 15l.01 0\"/><path d=\"M11 15l2 0\"/>","device-gamepad-2":"<path d=\"M12 5h3.5a5 5 0 0 1 0 10h-5.5l-4.015 4.227a2.3 2.3 0 0 1 -3.923 -2.035l1.634 -8.173a5 5 0 0 1 4.904 -4.019h3.4z\"/><path d=\"M14 15l4.07 4.284a2.3 2.3 0 0 0 3.925 -2.023l-1.6 -8.232\"/><path d=\"M8 9v2\"/><path d=\"M7 10h2\"/><path d=\"M14 10h2\"/>","heart-handshake":"<path d=\"M19.5 12.572l-7.5 7.428l-7.5 -7.428a5 5 0 1 1 7.5 -6.566a5 5 0 1 1 7.5 6.572\"/><path d=\"M12 6l-3.293 3.293a1 1 0 0 0 0 1.414l.543 .543c.69 .69 1.81 .69 2.5 0l1 -1a3.182 3.182 0 0 1 4.5 0l2.25 2.25\"/><path d=\"M12.5 15.5l2 2\"/><path d=\"M15 13l2 2\"/>","help-circle":"<path d=\"M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0\"/><path d=\"M12 16v.01\"/><path d=\"M12 13a2 2 0 0 0 .914 -3.782a1.98 1.98 0 0 0 -2.414 .483\"/>","home":"<path d=\"M5 12l-2 0l9 -9l9 9l-2 0\"/><path d=\"M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7\"/><path d=\"M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6\"/>","moneybag":"<path d=\"M9.5 3h5a1.5 1.5 0 0 1 1.5 1.5a3.5 3.5 0 0 1 -3.5 3.5h-1a3.5 3.5 0 0 1 -3.5 -3.5a1.5 1.5 0 0 1 1.5 -1.5z\"/><path d=\"M4 17v-1a8 8 0 1 1 16 0v1a4 4 0 0 1 -4 4h-8a4 4 0 0 1 -4 -4z\"/>","motorbike":"<path d=\"M5 16m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\"/><path d=\"M19 16m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\"/><path d=\"M7.5 14h5l4 -4h-10.5m1.5 4l4 -4\"/><path d=\"M13 6h2l1.5 3l2 4\"/>","pig-money":"<path d=\"M15 11v.01\"/><path d=\"M5.173 8.378a3 3 0 1 1 4.656 -1.377\"/><path d=\"M16 4v3.803a6.019 6.019 0 0 1 2.658 3.197h1.341a1 1 0 0 1 1 1v2a1 1 0 0 1 -1 1h-1.342c-.336 .95 -.907 1.8 -1.658 2.473v2.027a1.5 1.5 0 0 1 -3 0v-.583a6.04 6.04 0 0 1 -1 .083h-4a6.04 6.04 0 0 1 -1 -.083v.583a1.5 1.5 0 0 1 -3 0v-2l0 -.027a6 6 0 0 1 4 -10.473h2.5l4.5 -3h0z\"/>","scissors":"<path d=\"M6 7m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\"/><path d=\"M6 17m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0\"/><path d=\"M8.6 8.6l10.4 10.4\"/><path d=\"M8.6 15.4l10.4 -10.4\"/>","shopping-bag":"<path d=\"M6.331 8h11.339a2 2 0 0 1 1.977 2.304l-1.255 8.152a3 3 0 0 1 -2.966 2.544h-6.852a3 3 0 0 1 -2.965 -2.544l-1.255 -8.152a2 2 0 0 1 1.977 -2.304z\"/><path d=\"M9 11v-5a3 3 0 0 1 6 0v5\"/>","tag":"<path d=\"M7.5 7.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\"/><path d=\"M3 6v5.172a2 2 0 0 0 .586 1.414l7.71 7.71a2.41 2.41 0 0 0 3.408 0l5.592 -5.592a2.41 2.41 0 0 0 0 -3.408l-7.71 -7.71a2 2 0 0 0 -1.414 -.586h-5.172a3 3 0 0 0 -3 3z\"/>","tools-kitchen-2":"<path d=\"M19 3v12h-5c-.023 -3.681 .184 -7.406 5 -12zm0 12v6h-1v-3m-10 -14v17m-3 -17v3a3 3 0 1 0 6 0v-3\"/>","users":"<path d=\"M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0\"/><path d=\"M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2\"/><path d=\"M16 3.13a4 4 0 0 1 0 7.75\"/><path d=\"M21 21v-2a4 4 0 0 0 -3 -3.85\"/>","x":"<path d=\"M18 6l-12 12\"/><path d=\"M6 6l12 12\"/>","calendar":"<path d=\"M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12z\"/><path d=\"M16 3v4\"/><path d=\"M8 3v4\"/><path d=\"M4 11h16\"/><path d=\"M11 15h1\"/><path d=\"M12 15v3\"/>","calendar-check":"<path d=\"M11.5 21h-5.5a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v6\"/><path d=\"M16 3v4\"/><path d=\"M8 3v4\"/><path d=\"M4 11h16\"/><path d=\"M15 19l2 2l4 -4\"/>","chevron-left":"<path d=\"M15 6l-6 6l6 6\"/>","chevron-right":"<path d=\"M9 6l6 6l-6 6\"/>"};
   var CAT_ICON = { 'Salary': 'cash', 'Other Income': 'circle-plus', 'Housing': 'home', 'Food & Dining': 'tools-kitchen-2',
     'Transportation': 'motorbike', 'Work': 'briefcase', 'Essentials': 'basket', 'Shopping': 'shopping-bag',
     'Entertainment': 'device-gamepad-2', 'Family': 'users', 'Miscellaneous': 'help-circle', 'Lending': 'heart-handshake',
@@ -396,16 +424,21 @@
   function save() {
     var body = payload();
     if (typeof body === 'string') { say(body, true); if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error'); return; }
+    send(body, rememberSaved, say);
+  }
+  // Sends a save and closes the form. sendBeacon keeps going after the page closes (the bot reports
+  // a failure in the chat); without it the page waits for the answer and shows it with tell().
+  function send(body, remember, tell) {
     body.initData = tg.initData;
     body.via = 'beacon';
     var data = JSON.stringify(body), sent = false;
     if (data.length < 60000 && navigator.sendBeacon) {
       try { sent = navigator.sendBeacon(apiUrl(), data); } catch (e) { sent = false; }
     }
-    if (sent) {   // the browser keeps sending after the page closes; the bot reports a failure in the chat
-      rememberSaved(body);
+    if (sent) {
+      remember(body);
       if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-      say('✓ Saved · Đã lưu');
+      tell('✓ Saved · Đã lưu');
       setTimeout(function () { tg.close(); }, 150);
       return;
     }
@@ -413,21 +446,99 @@
     tg.MainButton.showProgress();
     call(body).then(function (r) {
       tg.MainButton.hideProgress();
-      if (!r.ok) { say(r.why || 'Not saved · Chưa lưu được', true); return; }
-      rememberSaved(body);
+      if (!r.ok) { tell(r.why || 'Not saved · Chưa lưu được', true); return; }
+      remember(body);
       if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-      say('✓ Saved · Đã lưu');
+      tell('✓ Saved · Đã lưu');
       setTimeout(function () { tg.close(); }, 300);
-    }).catch(function (e) { tg.MainButton.hideProgress(); say(String(e), true); });
+    }).catch(function (e) { tg.MainButton.hideProgress(); tell(String(e), true); });
+  }
+
+  // ---------- period form (no ?tx=) ----------
+  // Dates are 'yyyy-mm-dd' strings (Vietnam days), like the server. The choices (previous / current /
+  // next period around today, with the owner's own boundaries) come from the server and are kept on
+  // the phone, so the form shows at once; the server's answer refreshes them ~2 s later.
+  var P = { now: null, from: '', to: '', touched: false };
+  var PICKS = [['previous', 'chevron-left', 'Previous', 'Kỳ trước'], ['current', 'calendar-check', 'Current', 'Kỳ này'],
+               ['next', 'chevron-right', 'Next', 'Kỳ sau']];
+  function dm(s) { return s ? s.slice(8, 10) + '/' + s.slice(5, 7) : '—'; }
+  function dayNum(s) { var p = s.split('-').map(Number); return Date.UTC(p[0], p[1] - 1, p[2]) / 864e5; }
+  function validYmd(s) { return /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(dayNum(s) * 864e5).toISOString().slice(0, 10) === s; }
+  function todayYmd() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  function tellP(text, bad) { $('pMsg').textContent = text; $('pMsg').style.color = bad ? 'var(--bad)' : ''; }
+  function periodError() {
+    if (!validYmd(P.from) || !validYmd(P.to)) return 'Pick both dates · Chọn đủ hai ngày';
+    if (P.to < P.from) return 'To is before From · Đến ngày đang trước Từ ngày';
+    if (dayNum(P.to) - dayNum(P.from) > 366) return 'At most one year · Tối đa một năm';
+    return '';
+  }
+  function renderPeriod() {
+    var d = P.now, today = todayYmd();
+    if (d) {
+      var p = d.period, left = Math.max(0, dayNum(p.to) - Math.max(dayNum(today), dayNum(p.from)) + 1);
+      $('pNow').textContent = dm(p.from) + ' → ' + dm(p.to);
+      $('pState').textContent = today > p.to ? 'Ended · Đã kết thúc' : today < p.from ? 'Not started · Chưa bắt đầu'
+        : 'Running · Đang chạy · ' + left + (left === 1 ? ' day' : ' days') + ' left · còn ' + left + ' ngày';
+    }
+    var grid = $('pTiles'); grid.innerHTML = '';
+    PICKS.forEach(function (k) {
+      var q = d && d.choices && d.choices[k[0]];
+      var t = el('div', 'tile ptile' + (q && q.from === P.from && q.to === P.to ? ' on' : ''));
+      t.appendChild(icon(k[1])); t.appendChild(el('div', 'en', k[2])); t.appendChild(el('div', 'vi', k[3]));
+      t.appendChild(el('div', 'dates', q ? dm(q.from) + ' → ' + dm(q.to) : '…'));
+      t.onclick = function () {
+        if (!q) return;
+        if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+        P.from = q.from; P.to = q.to; P.touched = true; renderPeriod(); tellP('');
+      };
+      grid.appendChild(t);
+    });
+    $('pFrom').value = P.from; $('pTo').value = P.to;
+    var bad = P.from || P.to ? periodError() : '', n = bad || !P.from ? 0 : dayNum(P.to) - dayNum(P.from) + 1;
+    $('pDays').textContent = bad || (n ? n + (n === 1 ? ' day' : ' days') + ' · ' + n + ' ngày' : '');
+    $('pDays').style.color = bad ? 'var(--bad)' : '';
+  }
+  $('pFrom').onchange = $('pFrom').oninput = function () { P.from = $('pFrom').value; P.touched = true; renderPeriod(); tellP(''); };
+  $('pTo').onchange = $('pTo').oninput = function () { P.to = $('pTo').value; P.touched = true; renderPeriod(); tellP(''); };
+  function fillPeriod(d) {
+    P.now = d;
+    if (!P.touched) { P.from = d.period.from; P.to = d.period.to; }
+    renderPeriod();
+  }
+  function savePeriod() {
+    var bad = periodError();
+    if (bad) {   // already shown under the dates; a separate message only when both dates are empty
+      if (P.from || P.to) renderPeriod(); else tellP(bad, true);
+      if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+      return;
+    }
+    if (P.now && P.from === P.now.period.from && P.to === P.now.period.to) { tg.close(); return; }   // nothing changed
+    send({ action: 'periodSave', from: P.from, to: P.to }, function () {
+      if (P.now) { var d = JSON.parse(JSON.stringify(P.now)); d.period = { from: P.from, to: P.to }; keep('period', d); }
+    }, tellP);
+  }
+  function startPeriod() {
+    tg.MainButton.onClick(savePeriod);
+    $('status').hidden = true;
+    $('periodApp').hidden = false;
+    tg.MainButton.show();
+    var cached = load('period');
+    if (cached && cached.period) fillPeriod(cached); else renderPeriod();
+    call({ action: 'periodLoad' }).then(function (r) {
+      if (!r.ok) { tellP('! ' + r.why, true); return; }
+      keep('period', r);
+      fillPeriod(r);
+    }).catch(function (e) { tellP(String(e), true); });
   }
 
   // ---------- start ----------
   function fail(text) { $('status').textContent = text; $('status').style.color = 'var(--bad)'; $('status').hidden = false; }
   if (!tg || !tg.initData) { fail('Open it from the bot button · Hãy mở bằng nút trong chat với bot.'); return; }
-  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(api) || !txId) { fail('Missing link data · Thiếu dữ liệu link.'); return; }
+  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(api)) { fail('Missing link data · Thiếu dữ liệu link.'); return; }
   tg.ready();
   tg.expand();
   tg.MainButton.setText('Save · Lưu');
+  if (!txId) { startPeriod(); return; }   // opened from the board's "Change Period" link
   tg.MainButton.onClick(save);
 
   setCats(load('cats') || DEFAULT_CATS);
@@ -438,7 +549,7 @@
   if (S.dir) { show(); if (cached) fillChoices(cached); else setMode('single'); }   // instant: tiles from the phone
 
   call({ action: 'load', tx: txId }).then(function (r) {
-    if (!r.ok) { if (!S.dir) fail('⛔ ' + r.why); else say(r.why, true); return; }
+    if (!r.ok) { if (!S.dir) fail('! ' + r.why); else say(r.why, true); return; }
     setCats(r.cats); keep('cats', r.cats);
     S.people = r.people || []; keep('people', S.people);
     keepTx(r.tx);
@@ -449,7 +560,7 @@
     if (!S.touched) fillChoices(r.tx);          // fresh saved choices, unless the owner already started
     else if (S.mode === 'split') renderParts(); // the amount just arrived
     else renderSingle();                        // names may have arrived
-  }).catch(function (e) { if (!S.dir) fail('⛔ ' + e); else say(String(e), true); });
+  }).catch(function (e) { if (!S.dir) fail('! ' + e); else say(String(e), true); });
 })();
 </script>
 </body>

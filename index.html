@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Finance Tracker</title>
 <!-- Finance Tracker — transaction form + period form (Telegram Mini App), hosted on GitHub Pages.
-     Version 2026-10-12c.
+     Version 2026-10-12d.
      UI only: no data lives in this file. The bot opens it with ?tx=<Transaction ID>&d=<out|in>&api=<Apps
      Script /exec URL> (never the amount or the text: this URL reaches GitHub's servers). Every call
      carries Telegram's signed initData, verified server-side as the owner.
@@ -455,10 +455,12 @@
   }
 
   // ---------- period form (no ?tx=) ----------
-  // Dates are 'yyyy-mm-dd' strings (Vietnam days), like the server. The choices (previous / current /
-  // next period around today, with the owner's own boundaries) come from the server and are kept on
-  // the phone, so the form shows at once; the server's answer refreshes them ~2 s later.
-  var P = { now: null, from: '', to: '', touched: false };
+  // Dates are 'yyyy-mm-dd' strings (Vietnam days), like the server. The quick picks (previous /
+  // current / next period around today, with the owner's own boundaries) are kept on the phone, so
+  // the tiles show at once. The Report period itself (header, selection, date fields) is shown only
+  // from the server's answer (~1 s): a copy kept on the phone could be stale — iPhone lost the copy
+  // written just before the form closed (owner's test, 2026-10-12).
+  var P = { now: null, choices: null, from: '', to: '', touched: false };
   var PICKS = [['previous', 'chevron-left', 'Previous', 'Kỳ trước'], ['current', 'calendar-check', 'Current', 'Kỳ này'],
                ['next', 'chevron-right', 'Next', 'Kỳ sau']];
   function dm(s) { return s ? s.slice(8, 10) + '/' + s.slice(5, 7) : '—'; }
@@ -482,7 +484,7 @@
     }
     var grid = $('pTiles'); grid.innerHTML = '';
     PICKS.forEach(function (k) {
-      var q = d && d.choices && d.choices[k[0]];
+      var q = P.choices && P.choices[k[0]];
       var t = el('div', 'tile ptile' + (q && q.from === P.from && q.to === P.to ? ' on' : ''));
       t.appendChild(icon(k[1])); t.appendChild(el('div', 'en', k[2])); t.appendChild(el('div', 'vi', k[3]));
       t.appendChild(el('div', 'dates', q ? dm(q.from) + ' → ' + dm(q.to) : '…'));
@@ -500,8 +502,9 @@
   }
   $('pFrom').onchange = $('pFrom').oninput = function () { P.from = $('pFrom').value; P.touched = true; renderPeriod(); tellP(''); };
   $('pTo').onchange = $('pTo').oninput = function () { P.to = $('pTo').value; P.touched = true; renderPeriod(); tellP(''); };
-  function fillPeriod(d) {
+  function fillPeriod(d) {   // the server's answer
     P.now = d;
+    P.choices = d.choices;
     if (!P.touched) { P.from = d.period.from; P.to = d.period.to; }
     renderPeriod();
   }
@@ -513,20 +516,20 @@
       return;
     }
     if (P.now && P.from === P.now.period.from && P.to === P.now.period.to) { tg.close(); return; }   // nothing changed
-    send({ action: 'periodSave', from: P.from, to: P.to }, function () {
-      if (P.now) { var d = JSON.parse(JSON.stringify(P.now)); d.period = { from: P.from, to: P.to }; keep('period', d); }
-    }, tellP);
+    send({ action: 'periodSave', from: P.from, to: P.to }, function () {}, tellP);
   }
   function startPeriod() {
     tg.MainButton.onClick(savePeriod);
     $('status').hidden = true;
     $('periodApp').hidden = false;
     tg.MainButton.show();
-    var cached = load('period');
-    if (cached && cached.period) fillPeriod(cached); else renderPeriod();
+    try { localStorage.removeItem('ft.period'); } catch (e) {}   // the 2026-10-12c copy (whole answer)
+    var cached = load('periodPicks');   // quick picks only (header waits for the server)
+    if (cached && cached.previous) P.choices = cached;
+    renderPeriod();
     call({ action: 'periodLoad' }).then(function (r) {
-      if (!r.ok) { tellP('! ' + r.why, true); return; }
-      keep('period', r);
+      if (!r.ok) { $('pState').textContent = '! ' + r.why; return; }
+      keep('periodPicks', r.choices);
       fillPeriod(r);
     }).catch(function (e) { tellP(String(e), true); });
   }
